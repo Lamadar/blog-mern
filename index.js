@@ -1,102 +1,70 @@
-import express from 'express'
-import jwt from 'jsonwebtoken'
-import bcrypt from 'bcrypt'
-import mongoose from 'mongoose'
-import { registerValidator } from './validations/auth.js'
-import { validationResult } from 'express-validator'
+import express from "express";
+import multer from "multer";
+import mongoose from "mongoose";
 
-const app = express()
-app.use(express.json())
-mongoose.set('strictQuery', true);
+import {
+  registerValidator,
+  loginValidation,
+  postCreateValidation,
+} from "./validations.js";
+import { handleValidationErrors, checkAuth } from "./utils/index.js";
+import { UserController, PostController } from "./Controllers/index.js";
 
-import UserModel from './models/user.js'
+const app = express();
 
-try{
-    mongoose.connect('mongodb+srv://user:user@cluster0.qsnkwbc.mongodb.net/blog?retryWrites=true&w=majority')
-    console.log('Mongo connected')
-} catch(e){
-    console.log(e)
+const storage = multer.diskStorage({
+  destination: (_, __, cb) => {
+    cb(null, "uploads");
+  },
+  filename: (_, file, cb) => {
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({ storage });
+
+app.use(express.json());
+app.use("/uploads", express.static("uploads"));
+mongoose.set("strictQuery", true);
+
+try {
+  mongoose.connect(
+    "mongodb+srv://user:user@cluster0.qsnkwbc.mongodb.net/blog?retryWrites=true&w=majority"
+  );
+  console.log("Mongo connected");
+} catch (e) {
+  console.log(e);
 }
-app.post('/auth/login', async(req, res) => {
-    try {
-        const user = await UserModel.findOne({
-            email: req.body.email
-        })
-        if (!user){
-            return res.status(404).json({
-                message: 'User not exist'
-            })
-        }
 
-        const isValidPass = await bcrypt.compare(req.body.password, user._doc.passwordHash)
-        if (!isValidPass) {
-            return res.status(400).json({
-                message: 'Incorrect login or password'
-            })
-        }
-        const token = jwt.sign({
-            _id: user._id,
-        }, 
-        'secret123',
-        {
-            expiresIn: '30d'
-        })
-        const { passwordHash, ...userData } = user._doc
+app.post("/upload", checkAuth, upload.single("image"), (req, res) => {
+  res.json({
+    url: `/uploads/${req.file.originalname}`,
+  });
+});
 
-        res.json({
-            ...userData,
-            token,
-        })
+app.post(
+  "/auth/login",
+  loginValidation,
+  handleValidationErrors,
+  UserController.login
+);
+app.post(
+  "/auth/register",
+  registerValidator,
+  handleValidationErrors,
+  UserController.register
+);
+app.get("/auth/me", checkAuth, UserController.getMe);
 
-    } catch (e) {
-        console.log(e)
-        res.status(500).json({ message: 'Login failed'})
-    }
-})
-
-app.post('/auth/register', registerValidator, async(req, res) => {
-
-    try{
-        const errors = validationResult(req)
-        if (!errors.isEmpty()){
-            return res.status(400).json(errors.array())
-        }
-        const password = req.body.password
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(password, salt)
-
-        const doc = new UserModel({
-            email: req.body.email,
-            fullName: req.body.fullName,
-            avatarUrl: req.body.avatarUrl,
-            passwordHash: hash
-        })
-
-        const user = await doc.save()
-
-        const token = jwt.sign({
-            _id: user._id,
-        }, 
-        'secret123',
-        {
-            expiresIn: '30d'
-        })
-
-        const { passwordHash, ...userData } = user._doc
-
-        res.json({
-            ...userData,
-            token,
-        })
-    } catch (e) {
-        console.log(e)
-        res.status(409).json({ message: 'Registration failed'})
-    }
-})
+app.get("/posts", PostController.getAll);
+app.get("/posts/:id", PostController.getOne);
+app.post("/posts", checkAuth, postCreateValidation, PostController.create);
+app.patch("/posts/:id", checkAuth, PostController.update);
+app.delete("/posts/:id", checkAuth, PostController.remove);
 
 app.listen(4444, (err) => {
-    if (err){
-        return console.log(err)
-    }
-    console.log('Server running')
-})
+  if (err) {
+    return console.log(err);
+  }
+  console.log("Server running");
+});
